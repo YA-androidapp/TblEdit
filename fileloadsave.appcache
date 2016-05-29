@@ -1,0 +1,12 @@
+CACHE MANIFEST
+# rev1
+
+CACHE:
+./encoding.js
+./index.html
+
+NETWORK:
+*
+
+FALLBACK:
+/ index.html

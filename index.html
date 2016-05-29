@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html manifest="fileloadsave.appcache">
+
+<head>
+  <meta charset="utf-8">
+  <title>TblEdit</title>
+  <link rel="stylesheet" type="text/css" href="lib/handsontable.full.min.css">
+  <script src="lib/jquery-2.2.4.min.js"></script>
+  <script src="lib/handsontable.full.min.js"></script>
+  <script src="lib/encoding.js"></script>
+  <script>
+    window.onload = function() {
+
+      // File-Load-Save
+
+      if (window.File && window.FileReader) {
+        //File API
+      } else {
+        alert("Unsupported");
+      }
+
+      function $(id) {
+        return document.querySelector(id);
+      }
+
+      function updateProgress(newValue) {
+        $('#p1').value = newValue;
+        $('#p2').innerText = newValue;
+      }
+
+      function addEventListeners(reader) {
+        reader.addEventListener("loadstart", function(e) {
+          updateProgress(0);
+        });
+        reader.addEventListener("progress", function(e) {
+          updateProgress(100 * (e.loaded / e.total));
+        });
+        reader.addEventListener("loadend", function(e) {
+          updateProgress(100);
+        });
+      }
+
+      function toCSV(instance, rheader) {
+        var headers = instance.getColHeader();
+        var csv = ""; // headers.join(",") + "\n";
+        for (var i = 0; i < instance.countRows(); i++) {
+          var row = [];
+          for (var h in headers) {
+            var prop = instance.colToProp(h);
+            var value = instance.getDataAtRowProp(i, prop);
+            row.push(value);
+          }
+
+          if (rheader) {
+            csv += i + ":";
+          }
+          csv += row.join(",");
+          csv += "\n";
+        }
+
+        var csv1 = "";
+        do {
+          csv1 = csv.split(",\n");
+          num = csv1.length;
+          csv = csv1.join("\n");
+        } while (num > 1);
+
+        /*
+          csv = csv.replace(/\n([A-Za-z])[,]\n/g, function() {
+            return "\n" + arguments[1] + ":" + arguments[2] + "\n";
+          });
+          */
+
+        for (var i = 0; i < 40; i++) {
+          // 行に種別データがない場合
+          csv = csv.replace(/\n[A-Za-z][,]\n/g, "\n");
+
+          // 行に時刻データがない場合
+          csv = csv.replace(/\n[0-9]+[:]\n/g, "\n");
+        }
+        csv = csv.replace(/^[A-Za-z][,]\n/g, "");
+        csv = csv.replace(/^[0-9]+[:]\n/g, "");
+
+        for (var i = 0; i < 40; i++) {
+          csv = csv.replace(/\n([A-Za-z])[,]/g, function() {
+            return "\n" + arguments[1] + ":";
+          });
+        }
+        csv = csv.replace(/^([A-Za-z])[,]/g, function() {
+          return arguments[1] + ":";
+        });
+
+        var csv2 = "";
+        do {
+          csv2 = csv.split("\n\n\n");
+          num = csv2.length;
+          csv = csv2.join("\n\n");
+        } while (num > 1);
+
+        return csv;
+      }
+
+      $("#saveid").addEventListener("click", function() {
+
+        $("#contid").value = "";
+        $("#contid").value += ";" + $("#tblTitle").value;
+        $("#contid").value += "\n\n";
+        $("#contid").value += toCSV(handsonTypeTable, false);
+        $("#contid").value += "\n\n[MON][TUE][WED][THU][FRI]\n";
+        $("#contid").value += "#" + $("#tblTitle").value + " 平日\n";
+        $("#contid").value += toCSV(handsonTblTable1, true);
+        $("#contid").value += "\n\n[SAT][SUN][HOL]\n";
+        $("#contid").value += "#" + $("#tblTitle").value + " 土休日\n";
+        $("#contid").value += toCSV(handsonTblTable2, true);
+
+        // TODO TextAreaの内容ではなくデータグリッドの内容を保存
+        var value = $("#contid").value;
+        var href = "data:application/octet-stream," + encodeURIComponent(value);
+        this.setAttribute("href", href);
+      }, false);
+
+      $("#fileid").onchange = function(e) {
+        var files = e.target.files;
+        var s = "";
+        for (var i = 0; i < files.length; i++) {
+          var f = files[i];
+          s +=
+            'filename: ' + escape(f.name) + '\n' +
+            ' size: ' + f.size + ' Bytes\n' +
+            ' type: ' + f.type + '\n' +
+            ' date: ' + f.lastModifiedDate + '\n\n';
+
+          var reader = new FileReader();
+          // reader.onload = function(e){
+          //  $("#contid").value = e.target.result;
+          // }
+          // reader.readAsText(f, "Shift_JIS");
+          reader.onload = function(e) {
+            var rslt = e.target.result;
+            var array = new Uint8Array(rslt);
+            switch (Encoding.detect(array)) {
+              case 'UTF16':
+                array = new Uint16Array(e.target.result);
+                break;
+              case 'UTF32':
+                array = new Uint32Array(e.target.result);
+                break;
+            }
+            var text = Encoding.codeToString(Encoding.convert(array, 'UNICODE'));
+            $("#saveid").download = f.name; // escape(f.name);
+            $("#contid").value += text;
+          }
+          reader.onloadend = function(e) {
+            content = $("#contid").value;
+            loadTitle(content);
+            loadTbl(content);
+            loadType(content);
+          }
+          addEventListeners(reader);
+          reader.readAsArrayBuffer(f);
+        }
+      }
+
+      // Table
+
+      var console = document.getElementById('console'),
+        handsonTblTable1,
+        handsonTblTable2,
+        handsonTypeTable,
+        resultCount = document.getElementById('resultCount'),
+        searchField = document.getElementById('searchField'),
+        searchResultCount = 0,
+        tblTable1 = document.getElementById("tblTable1"),
+        tblTable2 = document.getElementById("tblTable2"),
+        tblTitle = document.getElementById("tblTitle"),
+        typeTable = document.getElementById("typeTable");
+
+      function searchResultCounter(instance, row, col, value, result) {
+        Handsontable.Search.DEFAULT_CALLBACK.apply(this, arguments);
+        if (result) {
+          searchResultCount++;
+        }
+      }
+
+      function beforeChange(changes, source) {
+        for (var i = changes.length - 1; i >= 0; i--) {
+          if (changes[i][3] === 'foo') {
+            changes.splice(i, 1);
+          } else if (changes[i][3] === 'bar') {
+            return false;
+          }
+        }
+      }
+
+      function afterChange(changes, source) {
+        if (source !== 'loadData') {
+          console.innerText = JSON.stringify(changes);
+        }
+      }
+
+      Handsontable.Dom.addEvent(searchField, 'keyup', function(event) {
+        var queryResult1,
+          queryResult2;
+        searchResultCount = 0;
+        queryResult = handsonTblTable1.search.query(this.value);
+        queryResult += handsonTblTable2.search.query(this.value);
+        resultCount.innerText = searchResultCount.toString();
+        handsonTblTable1.render();
+        handsonTblTable2.render();
+      });
+
+      function multiline2array(str) {
+        return (str.replace(/\r\n|\r/g, "\n")).split('\n');
+      }
+
+      function loadTitle(tblContent) {
+
+        var lines = multiline2array(tblContent),
+          title = "";
+        for (var i = 0; i < lines.length; i++) {
+          if (((lines[i]).contains("駅")) && ((lines[i]).contains("線")) && ((lines[i]).contains("方面"))) {
+            title = ((lines[i].split("方面"))[0]).replace(";", "").trim() + "方面";
+            break;
+          }
+        }
+        if (title.length > 0) {
+          tblTitle.value = title;
+        }
+      }
+
+      function loadTbl(tblContent) {
+
+        var flgHol = false,
+          lines = multiline2array(tblContent),
+          title = "",
+          tblDataWee = [28],
+          tblDataHol = [28];
+        for (var i = 0; i < tblDataWee.length; i++) {
+          tblDataWee[i] = [20];
+          for (var j = 0; j < tblDataWee[i].length; j++) {
+            tblDataWee[i][j] = "";
+          }
+        }
+        for (var i = 0; i < tblDataHol.length; i++) {
+          tblDataHol[i] = [20];
+          for (var j = 0; j < tblDataHol[i].length; j++) {
+            tblDataHol[i][j] = "";
+          }
+        }
+
+        for (var i = 0; i < lines.length; i++) {
+          if (((lines[i]).contains("[SAT]")) || (lines[i]).contains("[SUN]") || (lines[i]).contains("[HOL]")) {
+            flgHol = true;
+          } else if ((lines[i]).match(/^([0-2]?[0-9])[:](.+)(;.*)*/)) {
+            var hour = ((RegExp.$1) < 4) ? ((RegExp.$1) + 24) : (RegExp.$1);
+            if (flgHol) {
+              tblDataHol[hour] = (RegExp.$2).split(" ");
+            } else {
+              tblDataWee[hour] = (RegExp.$2).split(" ");
+            }
+          }
+        }
+
+        handsonTblTable1 = new Handsontable(tblTable1, {
+          data: tblDataWee,
+          colHeaders: true,
+          rowHeaders: true,
+          minRows: 28,
+          minCols: 20,
+          manualColumnResize: true,
+          manualRowResize: true,
+          beforeChange: beforeChange,
+          afterChange: afterChange,
+          search: {
+            callback: searchResultCounter
+          }
+        });
+
+        handsonTblTable2 = new Handsontable(tblTable2, {
+          data: tblDataHol,
+          colHeaders: true,
+          rowHeaders: true,
+          minRows: 28,
+          minCols: 20,
+          manualColumnResize: true,
+          manualRowResize: true,
+          beforeChange: beforeChange,
+          afterChange: afterChange,
+          search: {
+            callback: searchResultCounter
+          }
+        });
+      }
+
+      function loadType(tblContent) {
+        var lines = multiline2array(tblContent),
+          title = "",
+          typeData = [52];
+        for (var i = 0; i < typeData.length; i++) {
+          typeData[i] = [4];
+          for (var j = 0; j < typeData[i].length; j++) {
+            typeData[i][j] = "";
+          }
+        }
+        for (var i = 0; i < lines.length; i++) {
+          if ((lines[i]).match(/^([a-zA-Z])[:](.+)(;.*)*/)) {
+            typeData[(RegExp.$1).charCodeAt(0) - "A".charCodeAt(0)] = (RegExp.$1 + " " + RegExp.$2).split(" ");
+          }
+        }
+
+        handsonTypeTable = new Handsontable(typeTable, {
+          data: typeData,
+          minRows: 10,
+          minCols: 4,
+          manualColumnResize: true,
+          manualRowResize: true
+        });
+      }
+
+    };
+
+  </script>
+</head>
+
+<body>
+  <h1>Load</h1>
+  <input id="fileid" type="file" multiple>
+  <div>
+    <progress id="p1" max="100" value="0"><span id="p2">0</span>%</progress>
+  </div>
+  <div>
+    <h1>File Contents</h1>
+    <textarea id="contid" style="width:90%;height:2em;"></textarea>
+  </div>
+
+  <p>
+    <p>
+      <h2>Title</h2>
+      <div>
+        <input id="tblTitle" placeholder="The title of *.tbl" type="text" />
+      </div>
+    </p>
+
+    <p>
+      <h2>Type</h2>
+      <div>
+        <div id="typeTable"></div>
+      </div>
+    </p>
+
+    <p>
+      <h2>Data</h2>
+      <div>
+        <input id="searchField" placeholder="Search" type="search">
+        <p><span id="resultCount">0</span> results</p>
+        <pre id="console" class="console"></pre>
+      </div>
+
+      <div>
+        <h3>[MON][TUE][WED][THU][FRI]</h3>
+        <div id="tblTable1"></div>
+        <h3>[SAT][SUN][HOL]</h3>
+        <div id="tblTable2"></div>
+      </div>
+    </p>
+  </p>
+  <div>
+    <h1>Save</h1>
+    <a id="saveid" download="default.tbl">Save *.tbl</a>
+  </div>
+
+  <br />
+  <br />
+  <br />
+  <br />
+  <br />
+  <hr />
+
+  <h3>Author</h3>
+
+  <a href="https://github.com/YA-androidapp">YA-androidapp</a>
+
+</body>
+
+</html>
+<!--  Copyright (c) 2016 YA-androidapp(https://github.com/YA-androidapp) All rights reserved. -->
